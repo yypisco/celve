@@ -1,5 +1,4 @@
 # strategy_v2.py
-import math
 import pandas as pd
 
 # —— 第二策略：止盈 1/3@+10%、1/3@+20%、余仓 92% 追踪；
@@ -29,9 +28,10 @@ def backtest(
     stamp_duty_sell: float = 0.0005,
     slippage: float = 0.0,
 ):
-    def _lot_floor(q): return (q // lot_size) * lot_size
+    def _lot_floor(q): return int(q // lot_size) * lot_size
     def _commission(amount): return max(commission_min, amount * commission_rate)
     def _stamp(amount): return amount * stamp_duty_sell
+    def _hit_between(lo, hi, px): return (lo <= px) and (px <= hi)
 
     cash = initial_cash
     shares = 0
@@ -48,13 +48,14 @@ def backtest(
     prev_close, prev_high = None, None
 
     for _, r in bars.iterrows():
-        d, o, h, l, c = r["date"], r["open"], r["high"], r["low"], r["close"]
+        d = pd.to_datetime(r["date"])
+        o = float(r["open"]); h = float(r["high"]); l = float(r["low"]); c = float(r["close"])
 
         # 开盘前：激活前日生成的接回
         if tp_rebuys_next:
             tp_rebuys_active.extend(tp_rebuys_next)
             tp_rebuys_next = []
-        if sl_rebuy_flag_next and prev_close is not None:
+        if sl_rebuy_flag_next and (prev_close is not None):
             sl_rebuys_active.extend([
                 dict(px=prev_close * REBUY_SL_A),
                 dict(px=prev_close * REBUY_SL_B),
@@ -64,7 +65,7 @@ def backtest(
         # 记录净值
         curve.append(dict(date=d, equity=cash + shares * c, cash=cash, shares=shares, close=c))
 
-        if prev_close is None or prev_high is None:
+        if (prev_close is None) or (prev_high is None):
             prev_close, prev_high = c, h
             continue
 
@@ -89,7 +90,7 @@ def backtest(
                 sl_rebuy_flag_next = True
             else:
                 for reason, px in sorted([("STOP_LOSS", stop_loss_px), ("TRAIL_STOP", trail_px)], key=lambda x: x[1], reverse=True):
-                    if shares > 0 and l <= px <= h:
+                    if shares > 0 and _hit_between(l, h, px):
                         price = px - slippage
                         qty = shares
                         amt = price * qty
@@ -160,7 +161,7 @@ def backtest(
             if tp_rebuys_active:
                 for od in sorted(tp_rebuys_active, key=lambda x: x["px"]):
                     px = od["px"]
-                    if (o <= px) or (l <= px <= h):
+                    if (o <= px) or _hit_between(l, h, px):
                         price = px + slippage
                         q = _lot_floor(od["qty"])
                         if q > 0:
@@ -180,7 +181,7 @@ def backtest(
             if not filled_today and sl_rebuys_active:
                 for od in sorted(sl_rebuys_active, key=lambda x: x["px"]):
                     px = od["px"]
-                    if (o <= px) or (l <= px <= h):
+                    if (o <= px) or _hit_between(l, h, px):
                         price = px + slippage
                         budget = cash * 0.5
                         q = _lot_floor(budget / price)
@@ -203,8 +204,8 @@ def backtest(
                 buy_a = prev_close * BUY_LIM_A
                 breakout_px = prev_high
                 cands = []
-                if l <= buy_b <= h: cands.append(("BUY_B", buy_b))
-                if l <= buy_a <= h: cands.append(("BUY_A", buy_a))
+                if _hit_between(l, h, buy_b): cands.append(("BUY_B", buy_b))
+                if _hit_between(l, h, buy_a): cands.append(("BUY_A", buy_a))
                 if h >= breakout_px:
                     px = max(breakout_px, o)
                     if px <= h:
@@ -223,6 +224,8 @@ def backtest(
                             trades.append(dict(date=d, side="BUY", price=price, qty=q, fee=fee, reason=reason))
 
         prev_close, prev_high = c, h
+
+        # （提示：tp_rebuys_next 会在下一根开盘前被激活到 tp_rebuys_active）
 
     curve_df = pd.DataFrame(curve)
     trades_df = pd.DataFrame(trades)

@@ -1,5 +1,4 @@
 # strategy_v1.py
-import math
 import pandas as pd
 
 # —— 第一策略：两档买入（-0.7%/-1.4%/突破前高），止损8%，止盈10%/20%各50%，余仓92%追踪；
@@ -28,9 +27,10 @@ def backtest(
     bars: DataFrame 必含列 ['date','open','high','low','close']，按日期升序
     返回: (curve_df, trades_df, label)
     """
-    def _lot_floor(q): return (q // lot_size) * lot_size
+    def _lot_floor(q): return int(q // lot_size) * lot_size
     def _commission(amount): return max(commission_min, amount * commission_rate)
     def _stamp(amount): return amount * stamp_duty_sell
+    def _hit_between(lo, hi, px): return (lo <= px) and (px <= hi)
 
     cash = initial_cash
     shares = 0
@@ -44,7 +44,8 @@ def backtest(
     prev_close, prev_high = None, None
 
     for _, r in bars.iterrows():
-        d, o, h, l, c = r["date"], r["open"], r["high"], r["low"], r["close"]
+        d = pd.to_datetime(r["date"])
+        o = float(r["open"]); h = float(r["high"]); l = float(r["low"]); c = float(r["close"])
 
         # 次日生效 → 激活
         if oco_next is not None:
@@ -79,7 +80,7 @@ def backtest(
                 oco_next = {"px1": price * REBUY_A, "px2": price * REBUY_B}
             else:
                 for reason, px in sorted([("STOP_LOSS", stop_loss_px), ("TRAIL_STOP", trail_px)], key=lambda x: x[1], reverse=True):
-                    if shares > 0 and l <= px <= h:
+                    if shares > 0 and _hit_between(l, h, px):
                         price = px - slippage
                         qty = shares
                         amt = price * qty
@@ -149,7 +150,7 @@ def backtest(
             filled = False
             if oco_active is not None:
                 for px in sorted([oco_active["px1"], oco_active["px2"]]):
-                    if (o <= px) or (l <= px <= h):
+                    if (o <= px) or _hit_between(l, h, px):
                         price = (px + slippage)
                         qty = _lot_floor(cash / price)
                         if qty > 0:
@@ -170,8 +171,8 @@ def backtest(
                 buy_a = prev_close * BUY_LIM_A
                 breakout_px = prev_high
                 cands = []
-                if l <= buy_b <= h: cands.append(("BUY_B", buy_b))
-                if l <= buy_a <= h: cands.append(("BUY_A", buy_a))
+                if _hit_between(l, h, buy_b): cands.append(("BUY_B", buy_b))
+                if _hit_between(l, h, buy_a): cands.append(("BUY_A", buy_a))
                 if h >= breakout_px:
                     px = max(breakout_px, o)
                     if px <= h:
