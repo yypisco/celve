@@ -8,8 +8,8 @@ matplotlib.use("Agg")  # 无界面后端
 import matplotlib.pyplot as plt
 
 # ==== 修改这里的股票与区间 ====
-SYMBOL = "AAPL"            # 示例：美股 AAPL；A股如 "000063.SZ"/"513130"; 港股如 "3067.HK"
-START  = "2025-01-01"
+SYMBOL = "000063.SZ"            # 示例：美股 AAPL；A股如 "000063.SZ"/"513130"; 港股如 "3067.HK"
+START  = "2021-01-01"
 END    = "2025-09-01"
 INITIAL_CASH = 100_000.0
 OUTPUT_DIR = "./output"
@@ -91,6 +91,7 @@ def load_bars(symbol: str, start: str, end: str) -> pd.DataFrame:
 # ==== 导入策略 ====
 from strategy_v1 import backtest as run_v1
 from strategy_v2 import backtest as run_v2
+from strategy_cmvmb import backtest as run_v3
 
 def ensure_outdir(path: str): os.makedirs(path, exist_ok=True)
 
@@ -180,20 +181,25 @@ def main():
     curve1, trades1, label1 = run_v1(bars, INITIAL_CASH, **kwargs)
     print("运行 Strategy V2 …")
     curve2, trades2, label2 = run_v2(bars, INITIAL_CASH, **kwargs)
+    print("运行 Strategy CMVMB …")
+    curve3, trades3, label3 = run_v3(bars, INITIAL_CASH, **kwargs)
 
     # 导出单策略 XLSX
     save_strategy_xlsx(SYMBOL, START, END, label1, curve1, trades1)
     save_strategy_xlsx(SYMBOL, START, END, label2, curve2, trades2)
+    save_strategy_xlsx(SYMBOL, START, END, label3, curve3, trades3)
 
     # 对齐日期后导出对比（XLSX + PNG）
-    all_dates = pd.Series(sorted(set(curve1["date"]) | set(curve2["date"])))
+    all_dates = pd.Series(sorted(set(curve1["date"]) | set(curve2["date"]) | set(curve3["date"])))
     curve1a = pd.merge(all_dates.to_frame(name="date"), curve1, on="date", how="left").ffill()
     curve2a = pd.merge(all_dates.to_frame(name="date"), curve2, on="date", how="left").ffill()
-    save_comparison_xlsx(SYMBOL, START, END, [curve1a, curve2a], [label1, label2])
-    save_comparison_png(SYMBOL, START, END, [curve1a, curve2a], [label1, label2], title=f"{SYMBOL} Backtest")
+    curve3a = pd.merge(all_dates.to_frame(name="date"), curve3, on="date", how="left").ffill()
+    save_comparison_xlsx(SYMBOL, START, END, [curve1a, curve2a, curve3a], [label1, label2, label3])
+    save_comparison_png(SYMBOL, START, END, [curve1a, curve2a, curve3a], [label1, label2, label3],
+                    title=f"{SYMBOL} Backtest (V1/V2/CMVMB)")
 
     # 简要打印
-    for label, df in [(label1, curve1), (label2, curve2)]:
+    for label, df in [(label1, curve1), (label2, curve2),(label3, curve3)]:
         total_ret = df["equity"].iloc[-1] / df["equity"].iloc[0] - 1
         roll_max = df["equity"].cummax()
         mdd = (df["equity"] / roll_max - 1).min()
